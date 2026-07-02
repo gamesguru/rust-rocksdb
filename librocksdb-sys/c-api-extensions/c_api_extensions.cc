@@ -17,6 +17,7 @@
 #include "rocksdb/listener.h"
 #include "rocksdb/options.h"
 #include "rocksdb/table.h"
+#include "rocksdb/version.h"
 
 using ROCKSDB_NAMESPACE::BackgroundErrorRecoveryInfo;
 using ROCKSDB_NAMESPACE::BlockBasedTableOptions;
@@ -320,7 +321,12 @@ extern "C" unsigned char rocksdb_readoptions_get_optimize_multiget_for_io(
 
 extern "C" void rocksdb_block_based_options_set_uniform_cv_threshold(
     rocksdb_block_based_table_options_t* opt, double v) {
+#if ROCKSDB_MAJOR >= 11
   reinterpret_cast<BlockBasedTableOptions*>(opt)->uniform_cv_threshold = v;
+#else
+  (void)opt;
+  (void)v;
+#endif
 }
 
 // -----------------------------------------------------------------------------
@@ -329,12 +335,22 @@ extern "C" void rocksdb_block_based_options_set_uniform_cv_threshold(
 
 extern "C" void rocksdb_options_set_memtable_batch_lookup_optimization(
     rocksdb_options_t* opt, unsigned char v) {
+#if ROCKSDB_MAJOR >= 11
   reinterpret_cast<Options*>(opt)->memtable_batch_lookup_optimization = v;
+#else
+  (void)opt;
+  (void)v;
+#endif
 }
 
 extern "C" unsigned char rocksdb_options_get_memtable_batch_lookup_optimization(
     rocksdb_options_t* opt) {
+#if ROCKSDB_MAJOR >= 11
   return reinterpret_cast<Options*>(opt)->memtable_batch_lookup_optimization;
+#else
+  (void)opt;
+  return 0;
+#endif
 }
 
 // -----------------------------------------------------------------------------
