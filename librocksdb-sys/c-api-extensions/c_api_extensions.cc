@@ -310,7 +310,7 @@ extern "C" unsigned char rocksdb_readoptions_get_optimize_multiget_for_io(
 
 // -----------------------------------------------------------------------------
 // BlockBasedTableOptions::uniform_cv_threshold
-//
+// 
 // The corresponding `kAuto` enum value is declared in c_api_extensions.h
 // — no C-side definition is needed because the existing
 // `rocksdb_block_based_options_set_index_block_search_type` setter in
@@ -318,15 +318,18 @@ extern "C" unsigned char rocksdb_readoptions_get_optimize_multiget_for_io(
 // accepts any value the caller passes.
 // -----------------------------------------------------------------------------
 
+#if ROCKSDB_VERSION_GE(11, 1, 0)
 extern "C" void rocksdb_block_based_options_set_uniform_cv_threshold(
     rocksdb_block_based_table_options_t* opt, double v) {
   reinterpret_cast<BlockBasedTableOptions*>(opt)->uniform_cv_threshold = v;
 }
+#endif
 
 // -----------------------------------------------------------------------------
 // AdvancedColumnFamilyOptions::memtable_batch_lookup_optimization
 // -----------------------------------------------------------------------------
 
+#if ROCKSDB_VERSION_GE(11, 1, 0)
 extern "C" void rocksdb_options_set_memtable_batch_lookup_optimization(
     rocksdb_options_t* opt, unsigned char v) {
   reinterpret_cast<Options*>(opt)->memtable_batch_lookup_optimization = v;
@@ -336,6 +339,7 @@ extern "C" unsigned char rocksdb_options_get_memtable_batch_lookup_optimization(
     rocksdb_options_t* opt) {
   return reinterpret_cast<Options*>(opt)->memtable_batch_lookup_optimization;
 }
+#endif
 
 // -----------------------------------------------------------------------------
 // CompactOptions::blob_garbage_collection_age_cutoff

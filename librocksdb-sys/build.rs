@@ -224,6 +224,7 @@ fn main() {
     coroutines::validate_target(&target);
 
     let backend = Backend::resolve(&target);
+    emit_compat_cfg(&backend);
 
     // Re-run build.rs if the local C-API extensions change. The
     // extensions are a small handful of files outside the submodule
@@ -1430,6 +1431,45 @@ fn env_truthy(name: &str) -> bool {
         }
         Err(_) => false,
     }
+}
+
+fn emit_compat_cfg(backend: &Backend) {
+    println!("cargo::rustc-check-cfg=cfg(rocksdb_ge_11_1_0)");
+    if let Some((major, minor, patch)) = rocksdb_version(backend) {
+        if (major, minor, patch) >= (11, 1, 0) {
+            println!("cargo::rustc-cfg=rocksdb_ge_11_1_0");
+        }
+    }
+}
+
+fn rocksdb_version(backend: &Backend) -> Option<(u32, u32, u32)> {
+    for include in backend.all_includes() {
+        for candidate in [include.join("rocksdb/version.h"), include.join("version.h")] {
+            if !candidate.is_file() {
+                continue;
+            }
+            let contents = std::fs::read_to_string(&candidate).ok()?;
+            let mut major = None;
+            let mut minor = None;
+            let mut patch = None;
+            for line in contents.lines() {
+                let mut fields = line.split_whitespace();
+                if fields.next() != Some("#define") {
+                    continue;
+                }
+                match fields.next() {
+                    Some("ROCKSDB_MAJOR") => major = fields.next().and_then(|v| v.parse().ok()),
+                    Some("ROCKSDB_MINOR") => minor = fields.next().and_then(|v| v.parse().ok()),
+                    Some("ROCKSDB_PATCH") => patch = fields.next().and_then(|v| v.parse().ok()),
+                    _ => {}
+                }
+                if let (Some(major), Some(minor), Some(patch)) = (major, minor, patch) {
+                    return Some((major, minor, patch));
+                }
+            }
+        }
+    }
+    None
 }
 
 // =========================================================================

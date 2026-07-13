@@ -398,6 +398,20 @@ When you opt in via any of these:
 
 Same set of variables exists for snappy (`SNAPPY_LIB_DIR`, `SNAPPY_STATIC`, `SNAPPY_COMPILE`) if you'd like to swap in a system libsnappy while keeping the bundled rocksdb.
 
+### Local Development Defaults
+
+This checkout is configured for a pinned local install at `/usr/local/zaidoon` through [`.cargo/config.toml`](.cargo/config.toml). In practice that means `cargo check`, `cargo clippy`, and `cargo test` should resolve against the known local RocksDB headers and libraries instead of whatever `ldconfig` or `pkg-config` might find on the host.
+
+The pinned defaults are:
+
+- `ROCKSDB_LIB_DIR=/usr/local/zaidoon/lib`
+- `ROCKSDB_INCLUDE_DIR=/usr/local/zaidoon/include`
+- `ROCKSDB_STATIC=1`
+- `CC=sccache clang`
+- `CXX=sccache clang++`
+
+Use `ROCKSDB_COMPILE=1` only when you explicitly want the vendored C++ RocksDB build. That path is intentionally slower because it compiles the native library and regenerates bindings during the Cargo build.
+
 #### Examples
 
 ```bash

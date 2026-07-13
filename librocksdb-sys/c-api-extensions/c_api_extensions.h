@@ -62,8 +62,10 @@ extern ROCKSDB_LIBRARY_API unsigned char rocksdb_readoptions_get_optimize_multig
 enum {
   rocksdb_block_based_table_index_block_search_type_auto = 2,
 };
+#if ROCKSDB_VERSION_GE(11, 1, 0)
 extern ROCKSDB_LIBRARY_API void rocksdb_block_based_options_set_uniform_cv_threshold(
     rocksdb_block_based_table_options_t*, double);
+#endif
 
 /* -------------------------------------------------------------------------
  * AdvancedColumnFamilyOptions::memtable_batch_lookup_optimization
@@ -72,10 +74,12 @@ extern ROCKSDB_LIBRARY_API void rocksdb_block_based_options_set_uniform_cv_thres
  * Immutable on the C++ side. Mirrors the existing memtable_huge_page_size
  * setter/getter pair.
  * ------------------------------------------------------------------------- */
+#if ROCKSDB_VERSION_GE(11, 1, 0)
 extern ROCKSDB_LIBRARY_API void rocksdb_options_set_memtable_batch_lookup_optimization(
     rocksdb_options_t*, unsigned char);
 extern ROCKSDB_LIBRARY_API unsigned char rocksdb_options_get_memtable_batch_lookup_optimization(
     rocksdb_options_t*);
+#endif
 
 /* -------------------------------------------------------------------------
  * CompactOptions::blob_garbage_collection_age_cutoff
