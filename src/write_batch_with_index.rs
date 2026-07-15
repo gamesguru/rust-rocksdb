@@ -1,4 +1,5 @@
 use crate::db::DBInner;
+use crate::ffi_util::CSlice;
 use crate::{
     AsColumnFamilyRef, DBAccess, DBCommon, DBPinnableSlice, DBRawIteratorWithThreadMode, Error,
     Options, ReadOptions, ThreadMode, ffi,
@@ -65,11 +66,8 @@ impl WriteBatchWithIndex {
             if value_data.is_null() {
                 Ok(None)
             } else {
-                Ok(Some(Vec::from_raw_parts(
-                    value_data.cast::<u8>(),
-                    value_size,
-                    value_size,
-                )))
+                let c_slice = CSlice::from_raw_parts(value_data.cast_const(), value_size);
+                Ok(Some(c_slice.as_ref().to_vec()))
             }
         }
     }
@@ -98,11 +96,8 @@ impl WriteBatchWithIndex {
             if value_data.is_null() {
                 Ok(None)
             } else {
-                Ok(Some(Vec::from_raw_parts(
-                    value_data.cast::<u8>(),
-                    value_size,
-                    value_size,
-                )))
+                let c_slice = CSlice::from_raw_parts(value_data.cast_const(), value_size);
+                Ok(Some(c_slice.as_ref().to_vec()))
             }
         }
     }
@@ -141,11 +136,8 @@ impl WriteBatchWithIndex {
             if value_data.is_null() {
                 Ok(None)
             } else {
-                Ok(Some(Vec::from_raw_parts(
-                    value_data.cast::<u8>(),
-                    value_size,
-                    value_size,
-                )))
+                let c_slice = CSlice::from_raw_parts(value_data.cast_const(), value_size);
+                Ok(Some(c_slice.as_ref().to_vec()))
             }
         }
     }
@@ -223,11 +215,8 @@ impl WriteBatchWithIndex {
             if value_data.is_null() {
                 Ok(None)
             } else {
-                Ok(Some(Vec::from_raw_parts(
-                    value_data.cast::<u8>(),
-                    value_size,
-                    value_size,
-                )))
+                let c_slice = CSlice::from_raw_parts(value_data.cast_const(), value_size);
+                Ok(Some(c_slice.as_ref().to_vec()))
             }
         }
     }

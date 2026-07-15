@@ -244,6 +244,10 @@ fn main() {
     coroutines::validate_target(&target);
 
     let backend = Backend::resolve(&target);
+    maybe_warn_about_prebuilt_bundles(&backend, &target);
+    if let Backend::System { includes } = &backend {
+        warn_on_system_header_version_mismatch(includes);
+    }
 
     // Vendored and system builds compile the local C-API extensions here.
     // Validated bundles already contain them and verify their source hash.
@@ -277,7 +281,9 @@ fn main() {
     #[cfg(feature = "coroutines")]
     {
         coroutines::warn_if_system_backend(&backend);
-        coroutines::link();
+        if coroutines::should_emit_link_directives(&backend) {
+            coroutines::link();
+        }
     }
 
     if cfg!(feature = "snappy") {
@@ -371,6 +377,8 @@ mod vendor {
     /// Compile RocksDB from the bundled submodule sources.
     pub(super) fn build(target: &Target) {
         let mut cfg = base_cfg(target);
+        let include = vendored_include();
+        apply_extension_feature_defines(&mut cfg, std::slice::from_ref(&include));
 
         apply_compression_features(&mut cfg);
         apply_optional_features(&mut cfg, target);
@@ -877,13 +885,23 @@ mod system {
     /// Build a `Backend::System` from `ROCKSDB_LIB_DIR`. Emits the
     /// corresponding `cargo::rustc-link-*` directives.
     pub(super) fn from_lib_dir_env() -> Backend {
-        let lib_dir =
+        let lib_dir_os =
             env::var_os("ROCKSDB_LIB_DIR").expect("checked by caller in Backend::resolve");
-        emit_link_directives(Path::new(&lib_dir));
+        let lib_dir = Path::new(&lib_dir_os);
+        emit_link_directives(lib_dir);
+        emit_transitive_link_directives();
 
-        Backend::System {
-            includes: env_includes_override(),
+        let mut includes = env_includes_override();
+        if includes.is_empty()
+            && let Some(prefix) = lib_dir.parent()
+        {
+            let candidate = prefix.join("include");
+            if candidate.join("rocksdb/c.h").exists() {
+                includes.push(candidate);
+            }
         }
+
+        Backend::System { includes }
     }
 
     /// FreeBSD default: link `/usr/local/lib/librocksdb.{so,a}` and read
@@ -892,6 +910,7 @@ mod system {
     /// does not reach this function.
     pub(super) fn from_freebsd_defaults() -> Backend {
         emit_link_directives(Path::new("/usr/local/lib"));
+        emit_transitive_link_directives();
 
         let mut includes = env_includes_override();
         if includes.is_empty() {
@@ -951,6 +970,23 @@ mod system {
         println!("cargo::rustc-link-search=native={}", lib_dir.display());
         let kind = link_kind();
         println!("cargo::rustc-link-lib={kind}=rocksdb");
+    }
+
+    fn emit_transitive_link_directives() {
+        let probe = |package| {
+            let mut config = pkg_config::Config::new();
+            if env::var_os("ROCKSDB_STATIC").is_some() {
+                config.statik(true);
+            }
+            let _ = config.probe(package);
+        };
+        // Preserve the historical best-effort snappy probe: unlike our own
+        // vendored build, we don't control whether the system librocksdb was
+        // built with snappy support.
+        probe("snappy");
+        if cfg!(feature = "io-uring") {
+            probe("liburing");
+        }
     }
 
     /// `ROCKSDB_STATIC` set to any non-empty value → static link;
@@ -1143,6 +1179,13 @@ mod bindings {
         for inc in includes {
             builder = builder.clang_arg(format!("-I{}", inc.display()));
         }
+        if header_contains(
+            includes,
+            Path::new("rocksdb/table.h"),
+            "index_block_search_type",
+        ) {
+            builder = builder.clang_arg("-DRUST_ROCKSDB_HAS_INDEX_BLOCK_SEARCH_TYPE");
+        }
 
         // Escape hatch for exotic system layouts. Whitespace-split — paths
         // with spaces aren't supported; users with such paths should
@@ -1246,18 +1289,35 @@ mod coroutines {
     /// emit a `cargo::warning=` so a missing-symbol link error has a
     /// breadcrumb back to this combination. This crate cannot tell
     /// whether the prebuilt librocksdb was actually compiled with
-    /// `USE_COROUTINES=1`; we still emit the folly link directives (the
-    /// user accepted responsibility by opting into both), but surface
-    /// the risk loudly.
+    /// `USE_COROUTINES=1`.
     pub(super) fn warn_if_system_backend(backend: &Backend) {
         if matches!(backend, Backend::System { .. }) {
             println!(
                 "cargo::warning=`coroutines` feature is enabled and \
-                 RocksDB is being linked from the system: ensure that \
-                 librocksdb was built with USE_COROUTINES=1 and \
-                 USE_FOLLY=1, otherwise you will get unresolved-symbol \
-                 link errors against folly's coroutine helpers."
+                 RocksDB is being linked from the system: if librocksdb \
+                 was NOT built with USE_COROUTINES=1/USE_FOLLY=1, this \
+                 feature has no effect against it and is safe to ignore."
             );
+        }
+    }
+
+    /// System-linked RocksDB owns its own coroutine dependency story. If the
+    /// user provides a folly install we still emit the matching link directives;
+    /// otherwise we allow metadata-only commands such as `cargo clippy
+    /// --all-features` to proceed and leave final link compatibility to the
+    /// system librocksdb.
+    pub(super) fn should_emit_link_directives(backend: &Backend) -> bool {
+        if matches!(backend, Backend::System { .. })
+            && env::var_os("ROCKSDB_FOLLY_INSTALL_PATH").is_none()
+        {
+            println!(
+                "cargo::warning=`coroutines` feature is enabled with system \
+                 RocksDB but ROCKSDB_FOLLY_INSTALL_PATH is not set; skipping \
+                 local folly link directives."
+            );
+            false
+        } else {
+            true
         }
     }
 
@@ -1480,6 +1540,89 @@ fn env_truthy(name: &str) -> bool {
     }
 }
 
+fn maybe_warn_about_prebuilt_bundles(backend: &Backend, target: &Target) {
+    if !matches!(backend, Backend::Vendored { .. }) {
+        return;
+    }
+    if env_truthy("ROCKSDB_COMPILE")
+        || env_truthy("ROCKSDB_USE_PKG_CONFIG")
+        || env::var_os("ROCKSDB_PREBUILT_DIR").is_some()
+        || env::var_os("ROCKSDB_LIB_DIR").is_some()
+        || env::var_os("CI").is_some()
+        || env::var("PROFILE").ok().as_deref() != Some("debug")
+        || target.os == "windows"
+    {
+        return;
+    }
+
+    println!(
+        "cargo::warning=using vendored RocksDB build; for faster iterative \
+         local builds, run `./scripts/build-rocksdb-prebuilt.sh` and set \
+         `ROCKSDB_PREBUILT_DIR` to the emitted bundle path"
+    );
+}
+
+fn apply_extension_feature_defines(cfg: &mut cc::Build, includes: &[PathBuf]) {
+    if header_contains(
+        includes,
+        Path::new("rocksdb/table.h"),
+        "index_block_search_type",
+    ) {
+        cfg.define("RUST_ROCKSDB_HAS_INDEX_BLOCK_SEARCH_TYPE", None);
+    }
+    if header_contains(
+        includes,
+        Path::new("rocksdb/table.h"),
+        "uniform_cv_threshold",
+    ) {
+        cfg.define("RUST_ROCKSDB_HAS_UNIFORM_CV_THRESHOLD", None);
+    }
+    if header_contains(
+        includes,
+        Path::new("rocksdb/advanced_options.h"),
+        "memtable_batch_lookup_optimization",
+    ) {
+        cfg.define("RUST_ROCKSDB_HAS_MEMTABLE_BATCH_LOOKUP_OPTIMIZATION", None);
+    }
+}
+
+fn header_contains(includes: &[PathBuf], relative: &Path, needle: &str) -> bool {
+    includes
+        .iter()
+        .find(|include| include.join(relative).is_file())
+        .is_some_and(|include| {
+            std::fs::read_to_string(include.join(relative))
+                .is_ok_and(|header| header.contains(needle))
+        })
+}
+
+/// No version pin is enforced against a system-linked RocksDB (see the
+/// README's "Linking Against a Prebuilt RocksDB" section) — but a mismatch
+/// silently explains away a lot of confusing symptoms (missing extension
+/// features, option behavior differences), so surface it as a loud
+/// `cargo::warning=` rather than leaving the user to guess. Reuses the
+/// same header-version parsing the `ROCKSDB_PREBUILT_DIR` path already
+/// relies on for its (strict, panicking) validation.
+fn warn_on_system_header_version_mismatch(includes: &[PathBuf]) {
+    let expected = prebuilt::bundled_rocksdb_version();
+    let Some(actual) = includes
+        .iter()
+        .find_map(|inc| prebuilt::try_header_version(&inc.join("rocksdb/version.h")))
+    else {
+        return;
+    };
+
+    if actual != expected {
+        println!(
+            "cargo::warning=system RocksDB headers report version {actual}, but this crate \
+             (rust-librocksdb-sys) is built and tested against RocksDB {expected}. Missing \
+             options, extension features, or other API/ABI differences are possible; consider \
+             matching versions, or drop ROCKSDB_LIB_DIR/ROCKSDB_USE_PKG_CONFIG to use the \
+             vendored build instead."
+        );
+    }
+}
+
 // =========================================================================
 // Local C-API extensions
 // =========================================================================
@@ -1518,6 +1661,7 @@ mod extensions {
         for inc in backend.all_includes() {
             cfg.include(inc);
         }
+        apply_extension_feature_defines(&mut cfg, backend.all_includes());
 
         cfg.file("c-api-extensions/c_api_extensions.cc");
         cfg.cpp(true);
@@ -1526,6 +1670,10 @@ mod extensions {
         // headers compile the same way against the user's
         // `rocksdb/options.h`.
         let cxx_std = env::var("ROCKSDB_CXX_STD").unwrap_or_else(|_| DEFAULT_CXX_STD.to_string());
+        let cxx_std = cxx_std
+            .strip_prefix("-std=")
+            .or_else(|| cxx_std.strip_prefix("/std:"))
+            .unwrap_or(&cxx_std);
         if target.is_msvc() {
             cfg.flag(format!("/std:{cxx_std}"));
         } else {

@@ -224,7 +224,8 @@ features = ["mt_static"]
 features = ["bindgen-runtime"]  # Enabled by default
 ```
 
-The `bindgen-runtime` feature enables the `runtime` feature of bindgen, which dynamically links to libclang. This is suitable for most platforms and is enabled by default.
+On non-musl targets, the build uses bindgen's `runtime` libclang loading mode.
+This dynamically loads libclang and is suitable for most platforms.
 
 **Static Linking (Alpine Linux/musl)**:
 ```toml
@@ -233,9 +234,11 @@ default-features = false
 features = ["bindgen-static", "snappy", "lz4", "zstd", "zlib", "bzip2"]
 ```
 
-The `bindgen-static` feature enables the `static` feature of bindgen, which statically links to libclang. This is suitable for musllinux platforms, such as Alpine Linux.
-
-> **⚠️ Important**: The `runtime` and `static` features are mutually exclusive and won't compile if both are enabled.
+On musl targets, the build uses bindgen's `static` libclang mode. The
+`bindgen-runtime` and `bindgen-static` feature names are kept for compatibility,
+but they do not directly enable bindgen features because bindgen's `runtime` and
+`static` modes are mutually exclusive and Cargo's `--all-features` enables both
+feature names.
 
 ### Advanced Features
 
@@ -457,9 +460,9 @@ By default, `rust-rocksdb` builds RocksDB from the bundled submodule. To link ag
 | -------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `ROCKSDB_PREBUILT_DIR=<p>`  | Use an exact bundle from `scripts/build-rocksdb-prebuilt.sh`. Validated before linking; mismatches are errors. |
 | `ROCKSDB_USE_PKG_CONFIG=1` | Probe `pkg-config rocksdb` to discover lib + include paths automatically. Accepts `1` or `true`.             |
-| `ROCKSDB_LIB_DIR=<path>`   | Look for `librocksdb.{a,so,dylib,dll}` in `<path>`. **Requires `ROCKSDB_INCLUDE_DIR` to be set too.**        |
+| `ROCKSDB_LIB_DIR=<path>`   | Look for `librocksdb.{a,so,dylib,dll}` in `<path>`. If `ROCKSDB_INCLUDE_DIR` is unset, `<path>/../include` is used when it contains `rocksdb/c.h`. |
 | `ROCKSDB_STATIC`           | Static-link the system rocksdb (default is dynamic). Any non-empty value enables it (legacy semantics).      |
-| `ROCKSDB_INCLUDE_DIR=<p>`  | Headers for `bindgen`. Mandatory with `ROCKSDB_LIB_DIR`; with `ROCKSDB_USE_PKG_CONFIG` it is *merged in front* of pkg-config's discovered paths (does not replace them). |
+| `ROCKSDB_INCLUDE_DIR=<p>`  | Headers for `bindgen`. With `ROCKSDB_LIB_DIR`, this overrides the `<path>/../include` fallback; with `ROCKSDB_USE_PKG_CONFIG`, it is searched before pkg-config's include paths. |
 | `ROCKSDB_COMPILE=1`        | Force the bundled vendored build even if the above are set. Accepts `1` or `true` (case-insensitive).        |
 | `ROCKSDB_CXX_STD=c++23`    | Override the C++ standard used to compile RocksDB (default `c++20`). Only used for vendored builds.          |
 | `CXXSTDLIB=stdc++`         | Override the C++ stdlib linked (e.g. `c++` for libc++, `stdc++` for libstdc++).                              |
@@ -471,9 +474,9 @@ vendored build.
 When you opt in via the generic system-library variables:
 
 - `bindgen` runs against the **chosen backend's headers** (system rocksdb when linked from the system, bundled otherwise), so the generated FFI cannot silently drift from the linked library. If no include directory can be determined, the build script panics with an actionable error rather than guessing `/usr/include`.
-- No version pin is enforced &mdash; you're the power user. The bundled RocksDB version is the trailing component of `librocksdb-sys`'s `version = "X.Y.Z+RR.S.T"` in `Cargo.toml`; make sure your system rocksdb is API-compatible.
+- No version pin is enforced &mdash; you're the power user. The bundled RocksDB version is the trailing component of `librocksdb-sys`'s `version = "X.Y.Z+RR.S.T"` in `Cargo.toml`; make sure your system rocksdb is API-compatible. If the system headers' `rocksdb/version.h` reports a different `MAJOR.MINOR.PATCH`, the build script emits a `cargo::warning=` (build still proceeds).
 - The `snappy` Cargo feature becomes a no-op: the system librocksdb is expected to provide snappy support itself, so building and linking a second copy would risk duplicate symbols. The build script emits a `cargo::warning=` so the silent skip isn't surprising.
-- The `coroutines` Cargo feature still emits folly link directives, but the build script emits a `cargo::warning=` reminding you that your prebuilt librocksdb must have been built with `USE_COROUTINES=1` and `USE_FOLLY=1` &mdash; otherwise you'll get unresolved-symbol link errors against folly.
+- The `coroutines` Cargo feature emits a `cargo::warning=` reminding you that your prebuilt librocksdb must have been built with `USE_COROUTINES=1` and `USE_FOLLY=1` &mdash; otherwise you'll get unresolved-symbol link errors against folly. If `ROCKSDB_FOLLY_INSTALL_PATH` is set, the build script also emits local folly link directives; otherwise system-linked builds assume your librocksdb package supplies the needed dependency metadata.
 
 Same set of variables exists for snappy (`SNAPPY_LIB_DIR`, `SNAPPY_STATIC`, `SNAPPY_COMPILE`) if you'd like to swap in a system libsnappy while keeping the bundled rocksdb.
 

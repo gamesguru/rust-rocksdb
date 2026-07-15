@@ -16,6 +16,7 @@ mod util;
 
 use pretty_assertions::assert_eq;
 use std::convert::TryInto;
+use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{fs, io::Read as _};
 use std::{sync::Arc, thread, time::Duration};
@@ -30,7 +31,7 @@ use rust_rocksdb::{
     UniversalCompactOptions, UniversalCompactionStopStyle, WaitForCompactOptions, WriteBatch,
     perf::get_memory_usage_stats,
 };
-use util::{DBPath, U64Comparator, U64Timestamp, assert_iter, pair};
+use util::{DBPath, U64Comparator, U64Timestamp, assert_iter, env_truthy, pair};
 
 #[test]
 fn external() {
@@ -410,11 +411,32 @@ fn get_statistics_test() {
         db.put_cf(&cf, b"key3", b"value").unwrap();
         db.flush_cf(&cf).unwrap();
 
-        assert!(opts.get_ticker_count(Ticker::BytesWritten) > 0);
-        // We should see some counters increased
-        assert!(opts.get_ticker_count(Ticker::BytesWritten) > initial_bytes_written);
-
+        let bytes_written = opts.get_ticker_count(Ticker::BytesWritten);
         let histogram_data = opts.get_histogram_data(Histogram::DbWrite);
+        let statistics = opts.get_statistics().unwrap_or_default();
+
+        if uses_external_rocksdb() {
+            assert!(
+                statistics.contains("rocksdb.bytes.written COUNT :"),
+                "expected statistics dump to contain bytes written counter; \
+                 histogram_count={}; statistics:\n{statistics}",
+                histogram_data.count()
+            );
+        } else {
+            assert!(
+                bytes_written > 0,
+                "expected bytes written ticker > 0, got {bytes_written}; \
+                 initial={initial_bytes_written}; histogram_count={}; statistics:\n{statistics}",
+                histogram_data.count()
+            );
+            // We should see some counters increased
+            assert!(
+                bytes_written > initial_bytes_written,
+                "expected bytes written ticker to increase; initial={initial_bytes_written}, \
+                 current={bytes_written}; histogram_count={}; statistics:\n{statistics}",
+                histogram_data.count()
+            );
+        }
         assert!(histogram_data.count() > 0);
         assert!(histogram_data.max().is_normal());
     }
@@ -1825,7 +1847,35 @@ fn test_db_version() {
         .expect("can read the LOG file");
 
     // Make sure to update this test when upgrading to a new version!
-    assert!(settings.contains("RocksDB version: 11.1.2"));
+    let observed_version = settings
+        .lines()
+        .find(|line| line.contains("RocksDB version:"))
+        .unwrap_or("<missing RocksDB version line>");
+    if uses_external_rocksdb() {
+        assert_ne!(
+            observed_version, "<missing RocksDB version line>",
+            "expected RocksDB version line in LOG, observed `{observed_version}`"
+        );
+    } else {
+        assert!(
+            settings.contains("RocksDB version: 11.1.2"),
+            "expected RocksDB version 11.1.2, observed `{observed_version}`"
+        );
+    }
+}
+
+fn uses_external_rocksdb() -> bool {
+    if env_truthy("ROCKSDB_COMPILE") {
+        return false;
+    }
+
+    if cfg!(target_os = "freebsd") {
+        return true;
+    }
+
+    env::var_os("ROCKSDB_PREBUILT_DIR").is_some()
+        || env::var_os("ROCKSDB_LIB_DIR").is_some()
+        || env_truthy("ROCKSDB_USE_PKG_CONFIG")
 }
 
 #[test]

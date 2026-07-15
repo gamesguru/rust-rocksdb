@@ -617,7 +617,7 @@ impl BlockBasedOptions {
     /// ```
     pub fn set_index_block_search_type(&mut self, search_type: IndexBlockSearchType) {
         unsafe {
-            ffi::rocksdb_block_based_options_set_index_block_search_type(
+            ffi::rust_rocksdb_block_based_options_set_index_block_search_type(
                 self.inner,
                 search_type as c_int,
             );
@@ -3608,7 +3608,7 @@ impl Options {
         let holder = Arc::new(LogCallback {
             callback: Box::new(callback),
         });
-        let holder_ptr = holder.as_ref() as *const LogCallback;
+        let holder_ptr = std::ptr::from_ref::<LogCallback>(holder.as_ref());
         let holder_cvoid = holder_ptr.cast::<c_void>().cast_mut();
 
         unsafe {
@@ -4807,6 +4807,10 @@ pub enum BlockBasedPinningTier {
 
 /// Index-block search algorithm selected by
 /// [`BlockBasedOptions::set_index_block_search_type`].
+///
+/// These numeric values are pinned to RocksDB's C/C++ ABI. Older system
+/// headers can be missing the named constants, so `librocksdb-sys` provides
+/// compatibility definitions when needed.
 ///
 /// `Auto` is only meaningful in combination with
 /// [`BlockBasedOptions::set_uniform_cv_threshold`]: the threshold gates whether
